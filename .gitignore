@@ -1,0 +1,7 @@
+__pycache__
+test
+*.code-workspace
+*.xlsx
+*.xls
+.DS_Store
+*.csv
