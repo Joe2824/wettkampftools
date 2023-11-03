@@ -98,7 +98,7 @@ class MainApplication(QMainWindow):
         bottom_navigation = QHBoxLayout()
 
         bottom_navigation.addWidget(QPushButton("Einstellungen", clicked=lambda: self.change_page(3)))
-        bottom_navigation.addWidget(QPushButton("Info", clicked=lambda: self.msg_box('Info', f'Version: {VERSION.replace("v", "")}\nAuthor: Joel Klein\nGithub: https://github.com/Joe2824/wellenwettkampf_tools')))
+        bottom_navigation.addWidget(QPushButton("Info", clicked=lambda: self.msg_box('Info', f'Version: {VERSION.replace("v", "")}\nAuthor: Joel Klein\nGithub: https://github.com/joe2824/wettkampftools')))
 
         navigation_layout.addLayout(bottom_navigation)
 
