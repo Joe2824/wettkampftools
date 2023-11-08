@@ -324,12 +324,12 @@ class MainApplication(QMainWindow):
             return
         
         try:
-            file_year = datetime.datetime.fromtimestamp(self.creation_date(file)).year
+            file_year = datetime.date.fromtimestamp(self.creation_date(file)).year
             current_year = datetime.date.today().year
             if file_year != current_year:
                 self.msg_box(title='ACHTUNG!', text=f'Hast du die richtige Datei ausgewählt?\nDie Datei ist aus dem Jahr {file_year}', icon=QMessageBox.Icon.Critical)
 
-            seriendruck = pd.read_excel(file, sheet_name='Seriendruck', index_col=0)
+            seriendruck = pd.read_excel(file, sheet_name='Seriendruck')
 
             # Fix names when something is wrong
             seriendruck['Altersklasse'].replace(r'\bAK\b', value='AK', regex=True, inplace=True)
