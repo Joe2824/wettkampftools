@@ -25,6 +25,7 @@ if '_PYIBoot_SPLASH' in os.environ and importlib.util.find_spec("pyi_splash"):
 
 if  importlib.util.find_spec("win32com"):
     from win32com.client import *
+    WINDOWS = True
     def get_version_number(file_path):
         information_parser = Dispatch("Scripting.FileSystemObject")
         print(information_parser)
@@ -32,6 +33,7 @@ if  importlib.util.find_spec("win32com"):
         return version
     VERSION = f'v{get_version_number(sys.argv[0])}'
 else:
+    WINDOWS = False
     VERSION = 'DEV VERSION'
 
 
@@ -300,7 +302,7 @@ class MainApplication(QMainWindow):
         last modified if that isn't possible.
         See http://stackoverflow.com/a/39501288/1709587 for explanation.
         '''
-        if platform.system() == 'Windows':
+        if platform.system() == 'Windows' or WINDOWS:
             return os.path.getctime(path_to_file)
         else:
             stat = os.stat(path_to_file)
