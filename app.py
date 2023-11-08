@@ -98,7 +98,7 @@ class MainApplication(QMainWindow):
         bottom_navigation = QHBoxLayout()
 
         bottom_navigation.addWidget(QPushButton("Einstellungen", clicked=lambda: self.change_page(3)))
-        bottom_navigation.addWidget(QPushButton("Info", clicked=lambda: self.msg_box('Info', f'Version: {VERSION.replace("v", "")}\nAuthor: Joel Klein\nGithub: https://github.com/Joe2824/wellenwettkampf_tools')))
+        bottom_navigation.addWidget(QPushButton("Info", clicked=lambda: self.msg_box('Info', f'Version: {VERSION.replace("v", "")}\nAuthor: Joel Klein\nGithub: https://github.com/joe2824/wettkampftools')))
 
         navigation_layout.addLayout(bottom_navigation)
 
@@ -324,18 +324,20 @@ class MainApplication(QMainWindow):
             return
         
         try:
-            file_year = datetime.datetime.fromtimestamp(self.creation_date(file)).year
+            file_year = datetime.date.fromtimestamp(self.creation_date(file)).year
             current_year = datetime.date.today().year
             if file_year != current_year:
                 self.msg_box(title='ACHTUNG!', text=f'Hast du die richtige Datei ausgewählt?\nDie Datei ist aus dem Jahr {file_year}', icon=QMessageBox.Icon.Critical)
 
-            seriendruck = pd.read_excel(file, sheet_name='Seriendruck', index_col=0)
+            seriendruck = pd.read_excel(file, sheet_name='Seriendruck')
 
             # Fix names when something is wrong
             seriendruck['Altersklasse'].replace(r'\bAK\b', value='AK', regex=True, inplace=True)
             seriendruck['Altersklasse'].replace(r'\bAkW\b', value='AkW', regex=True, inplace=True)
             seriendruck.replace('AK offen', 'AK Offen', inplace=True)
             seriendruck.replace('AkW offen', 'AkW Offen', inplace=True)
+
+            seriendruck['WWK'] = seriendruck['Altersklasse'].str.contains(r'\bAkW\b', case=False, na=False).replace({True: 'x', False: ''}, regex=True)
 
             # Predefine category sort
             seriendruck['Altersklasse'] = pd.Categorical(seriendruck['Altersklasse'], categories=self.all_age_groups)
