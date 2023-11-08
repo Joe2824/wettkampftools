@@ -337,6 +337,8 @@ class MainApplication(QMainWindow):
             seriendruck.replace('AK offen', 'AK Offen', inplace=True)
             seriendruck.replace('AkW offen', 'AkW Offen', inplace=True)
 
+            seriendruck['WWK'] = seriendruck['Altersklasse'].str.contains(r'\bAkW\b', case=False, na=False).replace({True: 'x', False: ''}, regex=True)
+
             # Predefine category sort
             seriendruck['Altersklasse'] = pd.Categorical(seriendruck['Altersklasse'], categories=self.all_age_groups)
             # Sort values
