@@ -25,7 +25,6 @@ if '_PYIBoot_SPLASH' in os.environ and importlib.util.find_spec("pyi_splash"):
 
 if  importlib.util.find_spec("win32com"):
     from win32com.client import *
-    WINDOWS = True
     def get_version_number(file_path):
         information_parser = Dispatch("Scripting.FileSystemObject")
         print(information_parser)
@@ -33,7 +32,6 @@ if  importlib.util.find_spec("win32com"):
         return version
     VERSION = f'v{get_version_number(sys.argv[0])}'
 else:
-    WINDOWS = False
     VERSION = 'DEV VERSION'
 
 
@@ -302,16 +300,20 @@ class MainApplication(QMainWindow):
         last modified if that isn't possible.
         See http://stackoverflow.com/a/39501288/1709587 for explanation.
         '''
-        if platform.system() == 'Windows' or WINDOWS:
-            return os.path.getctime(path_to_file)
+        if platform.system() == 'Windows':
+            creation_year = datetime.date.fromtimestamp(os.path.getctime(path_to_file)).year
+            last_change_year = datetime.date.fromtimestamp(os.path.getmtime(path_to_file)).year
+            return min(creation_year, last_change_year)
         else:
             stat = os.stat(path_to_file)
             try:
-                return stat.st_birthtime
+                date = stat.st_birthtime
             except AttributeError:
                 # We're probably on Linux. No easy way to get creation dates here,
                 # so we'll settle for when its content was last modified.
-                return stat.st_mtime
+                date = stat.st_mtime
+
+            return datetime.date.fromtimestamp(date).year
 
     def evaluation_wwk(self, evaluate=True):
         file = self.jauswertung_file_path
@@ -326,7 +328,7 @@ class MainApplication(QMainWindow):
             return
         
         try:
-            file_year = datetime.date.fromtimestamp(self.creation_date(file)).year
+            file_year = self.creation_date(file)
             current_year = datetime.date.today().year
             if file_year != current_year:
                 self.msg_box(title='ACHTUNG!', text=f'Hast du die richtige Datei ausgewählt?\nDie Datei ist aus dem Jahr {file_year}', icon=QMessageBox.Icon.Critical)
