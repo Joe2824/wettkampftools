@@ -3,9 +3,10 @@ import os
 import importlib
 import datetime
 import platform
+import requests
 import pandas as pd
-from PyQt6.QtCore import QUrl, QSettings
-from PyQt6.QtGui import QIcon, QDesktopServices, QPainter, QColor, QPixmap
+from PyQt6.QtCore import QUrl, QSettings, QUrl
+from PyQt6.QtGui import QIcon, QDesktopServices, QPixmap, QDesktopServices
 from PyQt6.QtWidgets import QApplication, QMainWindow, QWidget, QVBoxLayout, QPushButton, QLabel, QStackedWidget, QHBoxLayout, QGroupBox, QSizePolicy, QLineEdit, QFileDialog, QMessageBox, QListWidget, QCheckBox, QListWidgetItem, QSpacerItem, QComboBox, QFormLayout, QTabWidget
 
 basedir = os.path.dirname(__file__)
@@ -60,6 +61,8 @@ class MainApplication(QMainWindow):
         self.setup_settings_page()
 
         self.load_settings()
+
+        self.check_for_update()
 
     def setup_navigation(self):
         # Links angeordnete Navigationsliste
@@ -627,6 +630,22 @@ class MainApplication(QMainWindow):
 
         settings_page.setLayout(settings_layout)
         self.stacked_widget.addWidget(settings_page)
+
+    def check_for_update(self):
+        try:
+            response = requests.get('https://api.github.com/repos/joe2824/wettkampftools/releases')
+            if response.status_code != 200:
+                return
+    
+            releases = response.json()
+            if not releases:
+                return
+
+            if releases[0]['tag_name'] != VERSION:
+                self.msg_box(title='Eine neue Version ist verfügbar!', text='Update verfügbar', icon=QMessageBox.Icon.Information, buttonText='Update herunterladen', buttonClick=lambda: QDesktopServices.openUrl(QUrl('https://github.com/joe2824/wettkampftools/releases')))
+        except Exception:
+            pass
+
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
