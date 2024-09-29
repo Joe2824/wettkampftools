@@ -813,7 +813,6 @@ class PandasModel(QAbstractTableModel):
         return None
 
 if __name__ == "__main__":
-    subprocess.Popen([sys.executable], env={**os.environ, "PYINSTALLER_RESET_ENVIRONMENT": "1"})
     app = QApplication(sys.argv)
     app.setWindowIcon(QIcon(os.path.join(basedir, 'images', 'icon.ico')))
     window = MainApplication()

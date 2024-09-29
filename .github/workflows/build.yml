@@ -34,7 +34,8 @@ jobs:
       - run: pip install pyinstaller pyinstaller-versionfile
       - run: pip install -r requirements.txt
       - run: create-version-file metadata.yml --outfile file_version_info.txt --version ${{ steps.remove_prefix.outputs.tag_name }}
-      - run: pyinstaller --noconfirm --onefile --windowed --icon "images/icon.ico" --name "Wettkampftools" --add-data "images/;images/" --version-file="file_version_info.txt" --splash "images/splash.png"  "app.py"
+      #- run: pyinstaller --noconfirm --onefile --windowed --icon "images/icon.ico" --name "Wettkampftools" --add-data "images/;images/" --version-file="file_version_info.txt" --splash "images/splash.png"  "app.py"
+      - run: pyinstaller --noconfirm --onefile --windowed --icon "images/icon.ico" --name "Wettkampftools" --add-data "images/;images/" --version-file="file_version_info.txt" "app.py"
      
       - uses: actions/upload-artifact@v3
         with:
