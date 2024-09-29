@@ -711,7 +711,8 @@ class MainApplication(QMainWindow):
             if not releases:
                 return
 
-            if releases[0]['tag_name'] != VERSION and not 'DEV VERSION':
+            if releases[0]['tag_name'] != VERSION and not VERSION == 'DEV VERSION':
+                print('HIER')
                 self.msg_box(title='Eine neue Version ist verfügbar!', text='Update verfügbar', icon=QMessageBox.Icon.Information,
                              buttonText='Update herunterladen', buttonClick=lambda: QDesktopServices.openUrl(QUrl('https://github.com/joe2824/wettkampftools/releases')))
         except Exception:
