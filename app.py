@@ -3,12 +3,18 @@ import os
 import importlib
 import datetime
 import platform
+import requests
+import re
 import pandas as pd
-from PyQt6.QtCore import QUrl, QSettings
-from PyQt6.QtGui import QIcon, QDesktopServices, QPainter, QColor, QPixmap
-from PyQt6.QtWidgets import QApplication, QMainWindow, QWidget, QVBoxLayout, QPushButton, QLabel, QStackedWidget, QHBoxLayout, QGroupBox, QSizePolicy, QLineEdit, QFileDialog, QMessageBox, QListWidget, QCheckBox, QListWidgetItem, QSpacerItem, QComboBox, QFormLayout, QTabWidget
+from geopy.distance import geodesic
+from PyQt6.QtCore import QUrl, QSettings, QUrl, QAbstractTableModel, Qt, QModelIndex
+from PyQt6.QtGui import QIcon, QDesktopServices, QPixmap, QDesktopServices
+from PyQt6.QtWidgets import QApplication, QMainWindow, QWidget, QVBoxLayout, QPushButton, QLabel, QStackedWidget, QHBoxLayout, QGroupBox, QSizePolicy, QLineEdit, QFileDialog, QMessageBox, QListWidget, QCheckBox, QListWidgetItem, QSpacerItem, QComboBox, QFormLayout, QTabWidget, QTableView, QStyledItemDelegate
 
 basedir = os.path.dirname(__file__)
+
+# Coordinates for Bad Nauheim
+bad_nauheim_coords = (50.367073, 8.740880)
 
 try:
     from ctypes import windll  # Only exists on Windows.
@@ -23,7 +29,7 @@ if '_PYIBoot_SPLASH' in os.environ and importlib.util.find_spec("pyi_splash"):
     pyi_splash.close()
 
 
-if  importlib.util.find_spec("win32com"):
+if importlib.util.find_spec("win32com"):
     from win32com.client import *
     def get_version_number(file_path):
         information_parser = Dispatch("Scripting.FileSystemObject")
@@ -56,10 +62,16 @@ class MainApplication(QMainWindow):
         # Inhalte für die Hauptanwendungen hinzufügen
         self.setup_wwk_preperation()
         self.setup_wwk_evaluation()
-        self.setup_tools_group()
+        self.setup_tools_urkunden()
+        self.setup_tools_distance()
         self.setup_settings_page()
 
+        self.fetch_gliederungen_data()
         self.load_settings()
+
+        self.check_for_update()
+
+        self.preperation_competition_df=None
 
     def setup_navigation(self):
         # Links angeordnete Navigationsliste
@@ -68,7 +80,7 @@ class MainApplication(QMainWindow):
         navigation_layout = QVBoxLayout()
 
         logo = QLabel()
-        pixmap = QPixmap(os.path.join(basedir,'images','logo.png') )
+        pixmap = QPixmap(os.path.join(basedir, 'images', 'logo.png'))
         logo.setPixmap(pixmap)
         navigation_layout.addWidget(logo)
 
@@ -76,7 +88,7 @@ class MainApplication(QMainWindow):
         top_groups.setSpacing(30)
         # Gruppe "Wellenwettkampf" mit Buttons "Vorbereitung" und "Auswertung"
         waves_group = QGroupBox("Wellenwettkampf")
-        waves_group.setFixedHeight(180)
+        waves_group.setFixedHeight(120)
         waves_layout = QVBoxLayout()
         waves_layout.addWidget(QPushButton("Vorbereitung", clicked=lambda: self.change_page(0)))
         waves_layout.addWidget(QPushButton("Auswertung", clicked=lambda: self.change_page(1)))
@@ -85,9 +97,10 @@ class MainApplication(QMainWindow):
 
         # Gruppe "Tools" mit Button "Urkunden sortieren"
         tools_group = QGroupBox("Tools")
-        tools_group.setFixedHeight(80)
+        tools_group.setFixedHeight(120)
         tools_layout = QVBoxLayout()
         tools_layout.addWidget(QPushButton("Urkunden sortieren", clicked=lambda: self.change_page(2)))
+        tools_layout.addWidget(QPushButton("Entfernungen berechnen", clicked=lambda: self.change_page(3)))
         tools_group.setLayout(tools_layout)
         top_groups.addWidget(tools_group)
 
@@ -97,7 +110,7 @@ class MainApplication(QMainWindow):
 
         bottom_navigation = QHBoxLayout()
 
-        bottom_navigation.addWidget(QPushButton("Einstellungen", clicked=lambda: self.change_page(3)))
+        bottom_navigation.addWidget(QPushButton("Einstellungen", clicked=lambda: self.change_page(4)))
         bottom_navigation.addWidget(QPushButton("Info", clicked=lambda: self.msg_box('Info', f'Version: {VERSION.replace("v", "")}\nAuthor: Joel Klein\nGithub: https://github.com/joe2824/wettkampftools')))
 
         navigation_layout.addLayout(bottom_navigation)
@@ -105,7 +118,7 @@ class MainApplication(QMainWindow):
         navigation_widget.setLayout(navigation_layout)
         return navigation_widget
 
-    def msg_box(self, title, text, icon: QMessageBox.Icon=QMessageBox.Icon.Information, buttonText=None, buttonClick=None):
+    def msg_box(self, title, text, icon: QMessageBox.Icon = QMessageBox.Icon.Information, buttonText=None, buttonClick=None):
         msg_box = QMessageBox(self)
         msg_box.setWindowTitle(title)
         msg_box.setIcon(icon)
@@ -127,7 +140,7 @@ class MainApplication(QMainWindow):
         return listwidget
 
     def select_isc_export_file(self):
-        self.isc_export_file_path, _ = QFileDialog.getOpenFileName(self, 'ISC Export auswählen','','ISC Export (*.csv)')
+        self.isc_export_file_path, _ = QFileDialog.getOpenFileName(self, 'ISC Export auswählen', '', 'ISC Export (*.csv)')
         if self.isc_export_file_path:
             self.isc_export_file_entry.setText(self.isc_export_file_path)
             self.generate_competition_preperation()
@@ -143,7 +156,7 @@ class MainApplication(QMainWindow):
         if not file.endswith(('.csv')):
             self.msg_box(title='Fehler!', text=f'{file}˙\ist keine CSV Datei!', icon=QMessageBox.Icon.Critical)
             return
-        
+
         try:
 
             # Prepair Data and add Team Numbers if multiple Teams in one AK exist.
@@ -168,8 +181,9 @@ class MainApplication(QMainWindow):
                 df.replace(self.age_groups_senior_team, 'AK Senioren', inplace=True)
 
             # Preselect AK that are allowed to start in wave
-            df['start_as_akw'] = df['ak'].str.upper().isin(ak.upper() for ak in self.age_groups_start_permit_wwk[self.age_groups_start_permit_wwk.index(self.start_age_group_wwk):])
-            
+            df['start_as_akw'] = df['ak'].str.upper().isin(
+                ak.upper() for ak in self.age_groups_start_permit_wwk[self.age_groups_start_permit_wwk.index(self.start_age_group_wwk):])
+
             self.preperation_competition_df = df
 
             self.gliederungen_list.clear()
@@ -182,7 +196,8 @@ class MainApplication(QMainWindow):
         except Exception as e:
             msg_box = QMessageBox()
             msg_box.setWindowTitle('Fehler')
-            msg_box.setText(f'Ist die Datei\n{file}˙\nein Export aus dem ISC?\nVerwende bitte eine andere Datei!\n{e}')
+            msg_box.setText(
+                f'Ist die Datei\n{file}˙\nein Export aus dem ISC?\nVerwende bitte eine andere Datei!\n{e}')
             msg_box.addButton(QMessageBox.StandardButton.Ok)
             msg_box.setStandardButtons(QMessageBox.StandardButton.Ok)
             msg_box.setIcon(QMessageBox.Icon.Critical)
@@ -203,8 +218,9 @@ class MainApplication(QMainWindow):
             item.setSizeHint(checkbox.sizeHint())
             self.teams_list.setItemWidget(item, checkbox)
             checkbox.setChecked(team['start_as_akw'])
-            checkbox.stateChanged.connect(lambda state, index=index, checkbox=checkbox: self.update_preperation_competition_state(index, checkbox.isChecked()))
-    
+            checkbox.stateChanged.connect(lambda state, index=index, checkbox=checkbox: self.update_preperation_competition_state(
+                index, checkbox.isChecked()))
+
     def update_preperation_competition_state(self, index, state):
         self.preperation_competition_df.at[index, 'start_as_akw'] = state
 
@@ -228,7 +244,8 @@ class MainApplication(QMainWindow):
 
         if file_path:
             result_df.to_excel(file_path, sheet_name='Meldungen', index=False)
-            self.msg_box(title='Export erfolgreich!', text='Export erfolgreich!', icon=QMessageBox.Icon.Information, buttonText='Meldungen öffnen', buttonClick=lambda _, path=file_path: self.open_export_file(path))
+            self.msg_box(title='Export erfolgreich!', text='Export erfolgreich!', icon=QMessageBox.Icon.Information, buttonText='Meldungen öffnen',
+                         buttonClick=lambda _, path=file_path: self.open_export_file(path))
 
     def open_export_file(self, path):
         url = QUrl.fromLocalFile(path)
@@ -256,9 +273,9 @@ class MainApplication(QMainWindow):
         self.isc_export_file_entry = QLineEdit()
         select_isc_file_layout.addWidget(self.isc_export_file_entry)
 
-        self.folder_button_preperation = QPushButton('Auswählen', clicked=self.select_isc_export_file) # type: ignore
+        self.folder_button_preperation = QPushButton('Auswählen', clicked=self.select_isc_export_file)  # type: ignore
         select_isc_file_layout.addWidget(self.folder_button_preperation)
-    
+
         select_gliederung_layout = QVBoxLayout()
         wwk_preperation_layout.addLayout(select_gliederung_layout)
 
@@ -281,11 +298,11 @@ class MainApplication(QMainWindow):
         spacer = QSpacerItem(0, 0, QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Minimum)
         select_gliederung_teams_buttons.addSpacerItem(spacer)
 
-        self.reset_selected_teams = QPushButton('Auswahl zurücksetzten', clicked=self.generate_competition_preperation) # type: ignore
+        self.reset_selected_teams = QPushButton('Auswahl zurücksetzten', clicked=self.generate_competition_preperation)  # type: ignore
         self.reset_selected_teams.hide()
         select_gliederung_teams_buttons.addWidget(self.reset_selected_teams)
 
-        self.export_preperation_file = QPushButton('Exportieren', clicked=self.export_competition_preperation) # type: ignore
+        self.export_preperation_file = QPushButton('Exportieren', clicked=self.export_competition_preperation)  # type: ignore
         self.export_preperation_file.hide()
         wwk_preperation_layout.addWidget(self.export_preperation_file)
 
@@ -326,7 +343,7 @@ class MainApplication(QMainWindow):
         if not file.endswith(('.xls', '.xlsx')):
             self.msg_box(title='Fehler', text=f'{file}˙\ist keine Excel Datei!', icon=QMessageBox.Icon.Critical)
             return
-        
+
         try:
             file_year = self.creation_date(file)
             current_year = datetime.date.today().year
@@ -377,15 +394,16 @@ class MainApplication(QMainWindow):
                         ergebnis.to_excel(writer, sheet_name='Rettungswettkampf', index=True)
                         ergebnis_welle.to_excel(writer, sheet_name='Wellenwettkampf', index=True)
                         df.to_excel(writer, sheet_name='Quelldaten', index=False)
-                
-                self.msg_box(title='Export erfolgreich!', text='Export erfolgreich!', icon=QMessageBox.Icon.Information, buttonText='Auswertung öffnen', buttonClick=lambda _, path=output_path: self.open_export_file(path))
+
+                self.msg_box(title='Export erfolgreich!', text='Export erfolgreich!', icon=QMessageBox.Icon.Information,
+                             buttonText='Auswertung öffnen', buttonClick=lambda _, path=output_path: self.open_export_file(path))
 
         except Exception as e:
             self.msg_box(title='Fehler', text=f'Ist die Datei\n{file}˙\nein Export aus JAuswertung?\nVerwende bitte eine andere Datei!\n{e}', icon=QMessageBox.Icon.Critical)
             return
 
     def select_jauswertung_export_file(self, evaluate=True):
-        self.jauswertung_file_path, _ = QFileDialog.getOpenFileName(self, 'JAuswertung Export auswählen','','JAuswertung Export (*.xls *.xlsx)')
+        self.jauswertung_file_path, _ = QFileDialog.getOpenFileName(self, 'JAuswertung Export auswählen', '', 'JAuswertung Export (*.xls *.xlsx)')
         if self.jauswertung_file_path:
             self.jauswertung_file_entry.setText(self.jauswertung_file_path)
             self.evaluation_wwk(evaluate)
@@ -399,7 +417,7 @@ class MainApplication(QMainWindow):
         label.setStyleSheet("font-size: 24pt;")  # Set font size to 24pt
         wwk_evaluation_layout.addWidget(label)
 
-         # BoxLayout Measurments Folder selection
+        # BoxLayout Measurments Folder selection
         select_jauswertung_file_layout = QHBoxLayout()
         wwk_evaluation_layout.addLayout(select_jauswertung_file_layout)
 
@@ -409,14 +427,14 @@ class MainApplication(QMainWindow):
         self.jauswertung_file_entry = QLineEdit()
         select_jauswertung_file_layout.addWidget(self.jauswertung_file_entry)
 
-        self.folder_button_evaluation = QPushButton('Auswählen', clicked=lambda: self.select_jauswertung_export_file(True)) # type: ignore
+        self.folder_button_evaluation = QPushButton('Auswählen', clicked=lambda: self.select_jauswertung_export_file(True))  # type: ignore
         select_jauswertung_file_layout.addWidget(self.folder_button_evaluation)
 
         wwk_evaluation_layout.addStretch()
         wwk_evaluation.setLayout(wwk_evaluation_layout)
         self.stacked_widget.addWidget(wwk_evaluation)
 
-    def setup_tools_group(self):
+    def setup_tools_urkunden(self):
         # Seite für "Tools" mit Inhalt
         tools_page = QWidget()
         tools_layout = QVBoxLayout()
@@ -424,7 +442,7 @@ class MainApplication(QMainWindow):
         label.setStyleSheet("font-size: 24pt;")  # Set font size to 24pt
         tools_layout.addWidget(label)
 
-         # BoxLayout Measurments Folder selection
+        # BoxLayout Measurments Folder selection
         select_jauswertung_file_layout = QHBoxLayout()
         tools_layout.addLayout(select_jauswertung_file_layout)
 
@@ -433,22 +451,77 @@ class MainApplication(QMainWindow):
         self.jauswertung_file_entry = QLineEdit()
         select_jauswertung_file_layout.addWidget(self.jauswertung_file_entry)
 
-        self.folder_button_evaluation = QPushButton('Auswählen', clicked=lambda: self.select_jauswertung_export_file(False)) # type: ignore
+        self.folder_button_evaluation = QPushButton('Auswählen', clicked=lambda: self.select_jauswertung_export_file(False))  # type: ignore
         select_jauswertung_file_layout.addWidget(self.folder_button_evaluation)
 
         tools_layout.addStretch()
         tools_page.setLayout(tools_layout)
         self.stacked_widget.addWidget(tools_page)
-     
-    def add_age_group(self, input_field : QLineEdit, listwidget: QListWidget, combobox: QComboBox = None):
+
+    def select_isc_export_file_distance(self):
+        self.isc_export_file_path, _ = QFileDialog.getOpenFileName(self, 'ISC Export auswählen', '', 'ISC Export (*.csv)')
+        if self.isc_export_file_path:
+            self.isc_export_file_distance_entry.setText(self.isc_export_file_path)
+            self.generate_competition_preperation()
+            df = self.calculate_distances()
+
+            print('GUDE',df)
+
+            # Update the table view with the DataFrame
+            model = PandasModel(dataframe=df)
+            self.table_view.setModel(model)
+            self.table_view.resizeColumnsToContents()
+            self.table_view.update()  # Refresh the view with the new data
+
+    def setup_tools_distance(self):
+        # Create the Tools page
+        self.tools_page = QWidget()
+        tools_layout = QVBoxLayout()
+
+        # Add a label to the layout
+        label = QLabel("Gliederung Entfernung nach Bad Nauheim")
+        label.setStyleSheet("font-size: 24pt;")
+        tools_layout.addWidget(label)
+
+        # Layout for selecting the ISC export file
+        select_isc_file_distance_layout = QHBoxLayout()
+        tools_layout.addLayout(select_isc_file_distance_layout)
+
+        # Add file selection UI elements
+        folder_label_preperation = QLabel('ISC Export:')
+        select_isc_file_distance_layout.addWidget(folder_label_preperation)
+
+        self.isc_export_file_distance_entry = QLineEdit()
+        select_isc_file_distance_layout.addWidget(self.isc_export_file_distance_entry)
+
+        self.folder_button_preperation = QPushButton('Auswählen', clicked=self.select_isc_export_file_distance)
+        select_isc_file_distance_layout.addWidget(self.folder_button_preperation)
+
+        # Create the QTableView for displaying the DataFrame
+        self.table_view = QTableView()
+        self.table_view.horizontalHeader().setStretchLastSection(True)
+        self.table_view.setAlternatingRowColors(True)
+        self.table_view.setSelectionBehavior(QTableView.SelectionBehavior.SelectRows)
+        
+        # Add the table view to the layout
+        tools_layout.addWidget(self.table_view)
+
+        # Add stretch to push everything to the top
+        tools_layout.addStretch()
+
+        # Set the layout and add the tools page to the stacked widget
+        self.tools_page.setLayout(tools_layout)
+        self.stacked_widget.addWidget(self.tools_page)       
+
+    def add_age_group(self, input_field: QLineEdit, listwidget: QListWidget, combobox: QComboBox = None):
         input = input_field.text()
         if input:
             listwidget.addItem(input)
             input_field.clear()
-            
+
             if combobox:
                 combobox.addItem(input)
-        
+
     def delete_age_group(self, listwidget: QListWidget, combobox: QComboBox = None):
         selected_items = listwidget.selectedItems()
 
@@ -475,7 +548,7 @@ class MainApplication(QMainWindow):
         self.age_groups_senior_individual_listwidget.addItems(self.age_groups_senior_individual)
 
         self.start_ak_wwk_combobox.clear()
-        self.start_ak_wwk_combobox.addItems(self.age_groups)   
+        self.start_ak_wwk_combobox.addItems(self.age_groups)
         self.start_age_group_wwk = self.settings.value("start_age_group_wwk", 'AK 13/14')
         self.start_ak_wwk_combobox.setCurrentText(self.start_age_group_wwk)
 
@@ -484,13 +557,15 @@ class MainApplication(QMainWindow):
 
         self.drop_not_started_teams = self.settings.value("drop_not_started_teams", True, type=bool)
         self.drop_not_started_teams_checkbox.setChecked(self.drop_not_started_teams)
-        
+
         self.age_groups_wwk = self.age_groups + ['AK Senioren'] if self.simplify_senior_groups else self.age_groups + self.age_groups_senior_team
         self.age_groups_start_permit_wwk = [ak for ak in self.age_groups_wwk if ak >= self.start_age_group_wwk]
 
         self.age_groups_wwk = [group.replace('AK', 'AkW') for group in self.age_groups_start_permit_wwk]
 
-        self.all_age_groups = self.age_groups + self.age_groups_senior_individual + self.age_groups_senior_team + ['AK Senioren'] + self.age_groups_wwk            
+        self.all_age_groups = self.age_groups + self.age_groups_senior_individual + self.age_groups_senior_team + ['AK Senioren'] + self.age_groups_wwk
+
+        self.gld_data = self.settings.value("gld_data", [])
 
     def restore_settings(self):
         # Restore default values for age_groups
@@ -505,7 +580,7 @@ class MainApplication(QMainWindow):
         default_age_groups_senior_individual = ['AK 25', 'AK 30', 'AK 35', 'AK 40', 'AK 45', 'AK 50', 'AK 55', 'AK 60+']
         self.age_groups_senior_individual_listwidget.clear()
         self.age_groups_senior_individual_listwidget.addItems(default_age_groups_senior_individual)
-        
+
         # Restore default value for start_ak_wwk
         self.start_ak_wwk_combobox.clear()
         self.start_ak_wwk_combobox.addItems(default_age_groups)
@@ -518,13 +593,13 @@ class MainApplication(QMainWindow):
         self.drop_not_started_teams_checkbox.setChecked(self.drop_not_started_teams)
 
         QMessageBox.information(self, "Einstellungen wiederhergestellt", "Alle Einstellungen zurückgesetzt.\nSpeichern nicht vergessen.")
-        
+
     def save_settings(self):
         # Get age groups from QListWidget
         age_groups = [self.age_groups_listwidget.item(i).text() for i in range(self.age_groups_listwidget.count())]
         age_groups_senior_team = [self.age_groups_senior_team_listwidget.item(i).text() for i in range(self.age_groups_senior_team_listwidget.count())]
         age_groups_senior_individual = [self.age_groups_senior_individual_listwidget.item(i).text() for i in range(self.age_groups_senior_individual_listwidget.count())]
-                
+
         # Save settings to QSettings
         self.settings.setValue("age_groups", age_groups)
         self.settings.setValue("age_groups_senior_team", age_groups_senior_team)
@@ -532,7 +607,7 @@ class MainApplication(QMainWindow):
         self.settings.setValue("start_age_group_wwk", self.start_ak_wwk_combobox.currentText())
         self.settings.setValue("simplify_senior_groups", self.simplify_senior_groups_checkbox.isChecked())
         self.settings.setValue("drop_not_started_teams", self.drop_not_started_teams_checkbox.isChecked())
-        
+
         # Display a confirmation message
         QMessageBox.information(self, "Einstellungen speichern", "Einstellungen erfolgreich gespeichert!!")
 
@@ -545,13 +620,12 @@ class MainApplication(QMainWindow):
         label = QLabel("Einstellungen")
         label.setStyleSheet("font-size: 24pt;")  # Set font size to 24pt
         settings_layout.addWidget(label)
-        
-        
+
         # Create QListWidget for age groups
         self.age_groups_listwidget = self.create_listwidget()
         self.age_groups_senior_team_listwidget = self.create_listwidget()
         self.age_groups_senior_individual_listwidget = self.create_listwidget()
-        
+
         tab_widget = QTabWidget()
 
         tab1 = QWidget()
@@ -561,13 +635,12 @@ class MainApplication(QMainWindow):
         self.simplify_senior_groups_checkbox = QCheckBox()
         wwk_form_layout.addRow(QLabel("Senioren Altersklassen vereinfachen:"), self.simplify_senior_groups_checkbox)
 
-
         self.start_ak_wwk_combobox = QComboBox()
         wwk_form_layout.addRow(QLabel("Wellen Starterlaubniss ab:"), self.start_ak_wwk_combobox)
 
         self.drop_not_started_teams_checkbox = QCheckBox()
         wwk_form_layout.addRow(QLabel("Nicht angetretene Teams bei Auswertung ausschließen:"), self.drop_not_started_teams_checkbox)
-        
+
         tab1_layout.addLayout(wwk_form_layout)
         tab1.setLayout(tab1_layout)
         tab_widget.addTab(tab1, "Wellenwettkampf")
@@ -612,15 +685,15 @@ class MainApplication(QMainWindow):
         tab3_age_groups_layout_individual.addWidget(QPushButton("Auswahl löschen", clicked=lambda: self.delete_age_group(self.age_groups_senior_individual_listwidget)))
         tab3.setLayout(tab3_layout)
         tab_widget.addTab(tab3, "Altersklassen Senioren")
-        
+
         settings_layout.addWidget(tab_widget)
 
         setting_buttons_layout = QHBoxLayout()
         setting_buttons_layout.addWidget(QPushButton("Speichern", clicked=self.save_settings))
 
-        #TODO: Exportieren und Importieren von Einstellungen ermöglichen
-        #setting_buttons_layout.addWidget(QPushButton("Exportieren", clicked=self.save_settings))
-        #setting_buttons_layout.addWidget(QPushButton("Importieren", clicked=self.save_settings))
+        # TODO: Exportieren und Importieren von Einstellungen ermöglichen
+        # setting_buttons_layout.addWidget(QPushButton("Exportieren", clicked=self.save_settings))
+        # setting_buttons_layout.addWidget(QPushButton("Importieren", clicked=self.save_settings))
 
         setting_buttons_layout.addWidget(QPushButton("Zurücksetzten", clicked=self.restore_settings))
         settings_layout.addLayout(setting_buttons_layout)
@@ -628,9 +701,118 @@ class MainApplication(QMainWindow):
         settings_page.setLayout(settings_layout)
         self.stacked_widget.addWidget(settings_page)
 
+    def check_for_update(self):
+        try:
+            response = requests.get('https://api.github.com/repos/joe2824/wettkampftools/releases')
+            if response.status_code != 200:
+                return
+
+            releases = response.json()
+            if not releases:
+                return
+
+            if releases[0]['tag_name'] != VERSION and not 'DEV VERSION':
+                self.msg_box(title='Eine neue Version ist verfügbar!', text='Update verfügbar', icon=QMessageBox.Icon.Information,
+                             buttonText='Update herunterladen', buttonClick=lambda: QDesktopServices.openUrl(QUrl('https://github.com/joe2824/wettkampftools/releases')))
+        except Exception:
+            pass
+
+    def clean_name(self, name):
+        pattern = re.compile(r"(ortsgruppe|bezirk|ortsverband|landesverband|e.v.)", re.IGNORECASE)
+        return pattern.sub("", name).strip()
+
+    def fetch_gliederungen_data(self):
+        try:
+            url = 'https://services.dlrg.net/service.php?doc=poi&strict=1&limit=5000'
+            response = requests.get(url)
+            response.raise_for_status()  # Check for request errors
+
+            data = response.json().get("locs", [])
+            gld_data = [entry for entry in data if isinstance(entry, dict) and entry.get('typ') == 'Gld']
+
+            self.settings.setValue("gld_data", gld_data)
+            return gld_data
+        except Exception as e:
+            return None
+
+    def calculate_distance_to_bad_nauheim(self, gld_data, gld_names):
+        if not gld_data:
+            return None
+
+        results = []
+        cleaned_gld_names = {self.clean_name(gld_name).lower(): gld_name for gld_name in gld_names}
+
+        for entry in gld_data:
+            pois = entry.get('pois', [])
+            for poi in pois:
+                clean_poi_name = self.clean_name(poi.get('name', 'Unknown')).lower()
+
+                # Check if cleaned POI name matches any cleaned Gld names
+                if clean_poi_name in cleaned_gld_names:
+                    original_name = cleaned_gld_names[clean_poi_name]
+                    lat = entry.get('lat')
+                    lon = entry.get('lon')
+
+                    if lat is not None and lon is not None:
+                        location_coords = (float(lat), float(lon))
+                        distance = geodesic(bad_nauheim_coords, location_coords).kilometers
+                        results.append({'Gliederung': original_name, 'Entfernung (km)': round(distance, 2)})
+
+        # Create DataFrame from results
+        df = pd.DataFrame(results)
+        df_sorted = df.sort_values(by='Entfernung (km)', ascending=False).reset_index(drop=True)
+        df_sorted.index = df_sorted.index + 1
+
+        return df_sorted
+
+    def calculate_distances(self):
+        try:
+            gld_data = self.fetch_gliederungen_data()
+        except Exception as e:
+            if not gld_data:
+                self.gld_data = self.settings.value("gld_data", [])
+            else:
+                self.gld_data = gld_data
+
+        df_results = self.calculate_distance_to_bad_nauheim(self.gld_data, self.preperation_competition_df['gliederung'].unique())
+        return df_results
+
+class PandasModel(QAbstractTableModel):
+    def __init__(self, dataframe):
+        super().__init__()
+        self._dataframe = dataframe if dataframe is not None else pd.DataFrame()
+
+    def rowCount(self, parent=QModelIndex()) -> int:
+        """Return the number of rows in the dataframe."""
+        if not self._dataframe.empty:
+            return len(self._dataframe)
+        return 0
+
+    def columnCount(self, parent=QModelIndex()) -> int:
+        """Return the number of columns in the dataframe."""
+        if not self._dataframe.empty:
+            return len(self._dataframe.columns)
+        return 0
+
+    def data(self, index, role=Qt.ItemDataRole.DisplayRole):
+        """Return the data for the given index."""
+        if role == Qt.ItemDataRole.DisplayRole:
+            value = self._dataframe.iloc[index.row(), index.column()]
+            return str(value)
+        return None
+
+    def headerData(self, section, orientation, role=Qt.ItemDataRole.DisplayRole):
+        """Provide headers for the table view."""
+        if role == Qt.ItemDataRole.DisplayRole:
+            if orientation == Qt.Orientation.Horizontal:
+                return str(self._dataframe.columns[section])
+            elif orientation == Qt.Orientation.Vertical:
+                return str(self._dataframe.index[section])
+        return None
+
 if __name__ == "__main__":
     app = QApplication(sys.argv)
-    app.setWindowIcon(QIcon(os.path.join(basedir,'images','icon.ico')))
+    app.setWindowIcon(QIcon(os.path.join(basedir, 'images', 'icon.ico')))
     window = MainApplication()
     window.show()
     sys.exit(app.exec())
