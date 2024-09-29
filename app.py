@@ -5,6 +5,7 @@ import datetime
 import platform
 import requests
 import re
+import subprocess
 import pandas as pd
 from geopy.distance import geodesic
 from PyQt6.QtCore import QUrl, QSettings, QUrl, QAbstractTableModel, Qt, QModelIndex
@@ -812,6 +813,7 @@ class PandasModel(QAbstractTableModel):
         return None
 
 if __name__ == "__main__":
+    subprocess.Popen([sys.executable], env={**os.environ, "PYINSTALLER_RESET_ENVIRONMENT": "1"})
     app = QApplication(sys.argv)
     app.setWindowIcon(QIcon(os.path.join(basedir, 'images', 'icon.ico')))
     window = MainApplication()
