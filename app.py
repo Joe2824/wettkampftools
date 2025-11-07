@@ -161,7 +161,7 @@ class MainApplication(QMainWindow):
         try:
 
             # Prepair Data and add Team Numbers if multiple Teams in one AK exist.
-            df = pd.read_csv(file, sep=';', encoding='latin-1')
+            df = pd.read_csv(file, sep=';', encoding='utf-8')
             # Remove Unnamed columns
             df = df.loc[:, ~df.columns.str.contains('^Unnamed')]
             # Remove unessesary whitespaces
