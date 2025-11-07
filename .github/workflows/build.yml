@@ -53,7 +53,7 @@ jobs:
 
       steps:
         - name: Artifact
-          uses: actions/download-artifact@v3
+          uses: actions/download-artifact@v6
           with:
             name: "Wettkampftools"
             path: dist
